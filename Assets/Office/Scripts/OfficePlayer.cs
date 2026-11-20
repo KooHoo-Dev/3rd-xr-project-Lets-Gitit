@@ -27,6 +27,8 @@ namespace OfficeEscape
         public AudioSource stepAudio;
 
         readonly List<XRInputSubsystem> inputSubsystems = new();
+        readonly Dictionary<Mouse, bool> rightButtonStates = new();
+        readonly Queue<(Mouse mouse, bool pressed)> remoteButtonChanges = new();
         bool ready;
         bool floorTracking;
         bool retryPressed;
@@ -34,7 +36,6 @@ namespace OfficeEscape
         bool interactHeld;
         bool desktopControlsActive;
         Mouse remoteGripMouse;
-        bool releaseRemoteRequested;
         float crouchOffset;
         float stepDistance;
         float yaw;
@@ -48,6 +49,7 @@ namespace OfficeEscape
         public bool Desktop { get; private set; }
         public bool Ready => ready;
         public bool RetryPressed => retryPressed;
+        public string DesktopRemoteReleaseReason { get; private set; }
 
         void Awake()
         {
@@ -65,23 +67,30 @@ namespace OfficeEscape
             yaw = transform.eulerAngles.y;
         }
 
-        void OnEnable() => InputSystem.onEvent += ReadRemoteRelease;
+        void OnEnable() => InputSystem.onEvent += ReadDesktopRightButton;
 
         void OnDisable()
         {
-            InputSystem.onEvent -= ReadRemoteRelease;
+            InputSystem.onEvent -= ReadDesktopRightButton;
             remoteGripMouse = null;
-            releaseRemoteRequested = false;
+            remoteButtonChanges.Clear();
+            rightButtonStates.Clear();
         }
 
-        void ReadRemoteRelease(InputEventPtr inputEvent, UnityEngine.InputSystem.InputDevice device)
+        void ReadDesktopRightButton(InputEventPtr inputEvent, UnityEngine.InputSystem.InputDevice device)
         {
-            if (device != remoteGripMouse || !desktopControlsActive ||
+            if (!Desktop || device is not Mouse mouse ||
                 (!inputEvent.IsA<StateEvent>() && !inputEvent.IsA<DeltaStateEvent>())) return;
 
-            // Device resets bypass onEvent. Only a button state from the grabbing mouse can release it.
-            if (remoteGripMouse.rightButton.ReadValueFromEvent(inputEvent, out float pressed) && pressed < .5f)
-                releaseRemoteRequested = true;
+            // Remember event states ourselves so a device reset cannot fabricate a button transition.
+            if (!mouse.rightButton.ReadValueFromEvent(inputEvent, out float right)) return;
+            if (!rightButtonStates.TryGetValue(mouse, out bool previous)) previous = mouse.rightButton.isPressed;
+            bool pressed = right >= .5f;
+            rightButtonStates[mouse] = pressed;
+            if (pressed == previous) return;
+
+            Debug.Log($"[RemoteGrip] 우클릭 {(pressed ? "누름" : "뗌")} (frame={Time.frameCount}, mouse={mouse.deviceId})", this);
+            if (desktopControlsActive) remoteButtonChanges.Enqueue((mouse, pressed));
         }
 
         void Update()
@@ -143,13 +152,14 @@ namespace OfficeEscape
         void UpdateDesktop()
         {
             if (!rightHand.IsSelecting(run.printer.remote))
-            {
                 remoteGripMouse = null;
-                releaseRemoteRequested = false;
-            }
             var mouse = remoteGripMouse ?? Mouse.current;
             var keyboard = Keyboard.current;
-            if (mouse == null || keyboard == null) return;
+            if (mouse == null || keyboard == null)
+            {
+                remoteButtonChanges.Clear();
+                return;
+            }
             if (mouse.leftButton.wasPressedThisFrame)
             {
                 Cursor.lockState = CursorLockMode.Locked;
@@ -163,13 +173,11 @@ namespace OfficeEscape
                 desktopControlsActive = false;
             }
             retryPressed = keyboard.rKey.wasPressedThisFrame;
-            if (run.IsPlaying && rightHand.IsSelecting(run.printer.remote) && releaseRemoteRequested)
+            if (!run.IsPlaying || !desktopControlsActive)
             {
-                remoteGripMouse = null;
-                releaseRemoteRequested = false;
-                rightHand.EndManualInteraction();
+                remoteButtonChanges.Clear();
+                return;
             }
-            if (!run.IsPlaying || !desktopControlsActive) return;
 
             Vector2 look = mouse.delta.ReadValue() * .12f;
             yaw += look.x;
@@ -179,7 +187,8 @@ namespace OfficeEscape
             bool crouch = keyboard.cKey.isPressed;
             bool watch = keyboard.tabKey.isPressed;
             ApplyStance(crouch, watch);
-            UpdateDesktopHand(keyboard, mouse);
+            UpdateDesktopHand(keyboard);
+            remoteButtonChanges.Clear();
             if (crouch || watch || rightHand.IsSelecting(run.drawer.handle)) return;
 
             Vector2 direction = new Vector2((keyboard.dKey.isPressed ? 1 : 0) - (keyboard.aKey.isPressed ? 1 : 0),
@@ -194,11 +203,11 @@ namespace OfficeEscape
             if (!focused)
             {
                 desktopControlsActive = false;
-                releaseRemoteRequested = false;
+                remoteButtonChanges.Clear();
             }
         }
 
-        void UpdateDesktopHand(Keyboard keyboard, Mouse mouse)
+        void UpdateDesktopHand(Keyboard keyboard)
         {
             bool hasTarget = Physics.Raycast(view.position, view.forward, out RaycastHit target,
                 2f, desktopAimLayers, QueryTriggerInteraction.Collide);
@@ -244,23 +253,41 @@ namespace OfficeEscape
                     rightHand.EndManualInteraction();
                     return;
                 }
+            }
 
-                if (!remote.WasDropped && target.collider.GetComponentInParent<OfficePrinterRemote>() == remote)
+            // Consume each down/up edge once, including a complete click within one frame.
+            while (remoteButtonChanges.Count > 0)
+            {
+                var change = remoteButtonChanges.Dequeue();
+                if (change.pressed)
                 {
-                    if (mouse.rightButton.wasPressedThisFrame)
+                    if (!rightHand.hasSelection && hasTarget && !remote.WasDropped &&
+                        target.collider.GetComponentInParent<OfficePrinterRemote>() == remote)
                     {
                         rightHand.StartManualInteraction((IXRSelectInteractable)remote);
-                        if (rightHand.IsSelecting(remote)) remoteGripMouse = mouse;
-                    }
-                    else
-                    {
-                        run.SetInteractionHint("우클릭 유지  리모컨 잡기");
-                        return;
+                        if (rightHand.IsSelecting(remote)) remoteGripMouse = change.mouse;
                     }
                 }
+                else if (change.mouse == remoteGripMouse && rightHand.IsSelecting(remote))
+                    ReleaseDesktopRemote("우클릭 해제");
+            }
+
+            if (!rightHand.hasSelection && hasTarget && !remote.WasDropped &&
+                target.collider.GetComponentInParent<OfficePrinterRemote>() == remote)
+            {
+                run.SetInteractionHint("우클릭 유지  리모컨 잡기");
+                return;
             }
 
             UpdateInteraction(hasTarget && target.distance <= 1.55f ? target.collider : null, pressed);
+        }
+
+        void ReleaseDesktopRemote(string reason)
+        {
+            DesktopRemoteReleaseReason = reason;
+            rightHand.EndManualInteraction();
+            DesktopRemoteReleaseReason = null;
+            remoteGripMouse = null;
         }
 
         void UpdateInteraction(Collider target, bool pressed)
@@ -321,9 +348,10 @@ namespace OfficeEscape
 
         public void StopMovement()
         {
+            remoteButtonChanges.Clear();
+            if (Desktop && rightHand.IsSelecting(run.printer.remote)) ReleaseDesktopRemote("게임 종료");
+            else if (Desktop && rightHand.hasSelection) rightHand.EndManualInteraction();
             remoteGripMouse = null;
-            releaseRemoteRequested = false;
-            if (Desktop && rightHand.hasSelection) rightHand.EndManualInteraction();
         }
     }
 }

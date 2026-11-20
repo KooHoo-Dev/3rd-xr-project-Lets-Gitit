@@ -25,6 +25,9 @@ namespace OfficeEscape
         protected override void OnSelectExited(SelectExitEventArgs args)
         {
             base.OnSelectExited(args);
+            string reason = run.player.DesktopRemoteReleaseReason;
+            if (run.player.Desktop && run.IsPlaying && !isSelected && string.IsNullOrEmpty(reason))
+                Debug.LogWarning($"[RemoteGrip] 우클릭 해제 명령 없이 리모컨 선택이 풀림 (frame={Time.frameCount}, canceled={args.isCanceled})", this);
             if (isSelected || WasDropped || !run.IsPlaying) return;
 
             WasDropped = true;
