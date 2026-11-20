@@ -7,6 +7,7 @@ namespace OfficeEscape
     public sealed class OfficeRun : MonoBehaviour
     {
         public const float Duration = 60f;
+        const float SecondsPerClockSecond = 1.5f;
         const string CaughtLine = "자네! 거기 있었구만! 이리 좀 와봐!";
         const string LateLine = "어? 퇴근 목록에 한 사람이 없네?";
         const string ExposureLine = "부장님 시선을 먼저 돌려야 해! 프린터기를 작동시키면 되지 않을까?";
@@ -40,7 +41,7 @@ namespace OfficeEscape
         bool hasFailureThought;
 
         public bool IsPlaying => started && outcome == Outcome.Playing;
-        public float SecondsLeft => started ? Mathf.Max(0, Duration - (Time.time - startedAt)) : Duration;
+        public float SecondsLeft => started ? Mathf.Max(0, Duration - (Time.time - startedAt) / SecondsPerClockSecond) : Duration;
         public bool HasBadge { get; private set; }
 
         bool InExposedApproach => exposedApproach.bounds.Contains(player.View.position);
@@ -65,7 +66,7 @@ namespace OfficeEscape
                     return;
                 }
 
-                float elapsed = Duration - SecondsLeft;
+                float elapsed = Time.time - startedAt;
                 questHint.enabled = !player.Desktop && elapsed < 6f;
                 int seconds = Mathf.CeilToInt(SecondsLeft);
                 wristTime.text = $"{seconds / 60:00}:{seconds % 60:00}";
