@@ -1,6 +1,7 @@
 using System.Collections.Generic;
 using UnityEngine;
 using UnityEngine.InputSystem;
+using UnityEngine.InputSystem.LowLevel;
 using UnityEngine.InputSystem.XR;
 using UnityEngine.XR;
 using UnityEngine.XR.Interaction.Toolkit.Interactables;
@@ -20,8 +21,6 @@ namespace OfficeEscape
         public TrackedPoseDriver rightTracking;
         public XRDirectInteractor leftHand;
         public XRDirectInteractor rightHand;
-        public Transform watchMount;
-        public Transform desktopWatchMount;
         public LayerMask desktopAimLayers;
         public GameObject desktopReticle;
         public GameObject desktopStart;
@@ -32,7 +31,10 @@ namespace OfficeEscape
         bool floorTracking;
         bool retryPressed;
         bool retryHeld;
+        bool interactHeld;
         bool desktopControlsActive;
+        Mouse remoteGripMouse;
+        bool releaseRemoteRequested;
         float crouchOffset;
         float stepDistance;
         float yaw;
@@ -41,7 +43,6 @@ namespace OfficeEscape
         int drawerPullFrame;
         Vector3 previewDrawerOrigin;
         Transform previewDrawerAxis;
-        BadgeReader previewReader;
 
         public Transform View => view;
         public bool Desktop { get; private set; }
@@ -51,6 +52,7 @@ namespace OfficeEscape
         void Awake()
         {
             Desktop = Application.platform != RuntimePlatform.Android;
+            OfficeHud.ConfigureFor(run, Desktop);
             desktopReticle.SetActive(Desktop);
             desktopStart.SetActive(Desktop);
             if (!Desktop) return;
@@ -59,10 +61,27 @@ namespace OfficeEscape
             leftTracking.enabled = false;
             rightTracking.enabled = false;
             leftHand.gameObject.SetActive(false);
-            run.watchDisplay.transform.SetParent(desktopWatchMount, false);
-            run.watchDisplay.transform.SetLocalPositionAndRotation(Vector3.zero, Quaternion.identity);
             view.localPosition = new Vector3(0, 1.63f, 0);
             yaw = transform.eulerAngles.y;
+        }
+
+        void OnEnable() => InputSystem.onEvent += ReadRemoteRelease;
+
+        void OnDisable()
+        {
+            InputSystem.onEvent -= ReadRemoteRelease;
+            remoteGripMouse = null;
+            releaseRemoteRequested = false;
+        }
+
+        void ReadRemoteRelease(InputEventPtr inputEvent, UnityEngine.InputSystem.InputDevice device)
+        {
+            if (device != remoteGripMouse || !desktopControlsActive ||
+                (!inputEvent.IsA<StateEvent>() && !inputEvent.IsA<DeltaStateEvent>())) return;
+
+            // Device resets bypass onEvent. Only a button state from the grabbing mouse can release it.
+            if (remoteGripMouse.rightButton.ReadValueFromEvent(inputEvent, out float pressed) && pressed < .5f)
+                releaseRemoteRequested = true;
         }
 
         void Update()
@@ -76,8 +95,12 @@ namespace OfficeEscape
             var hmd = InputDevices.GetDeviceAtXRNode(XRNode.Head);
             var left = InputDevices.GetDeviceAtXRNode(XRNode.LeftHand);
             var right = InputDevices.GetDeviceAtXRNode(XRNode.RightHand);
-            retryPressed = Button(right, CommonUsages.primaryButton) && !retryHeld;
-            retryHeld = Button(right, CommonUsages.primaryButton);
+            bool crouch = Button(right, CommonUsages.primaryButton);
+            bool interact = Button(right, CommonUsages.secondaryButton);
+            retryPressed = crouch && !retryHeld;
+            bool interactPressed = interact && !interactHeld;
+            retryHeld = crouch;
+            interactHeld = interact;
 
             if (!ready && Button(hmd, CommonUsages.isTracked) && left.isValid && right.isValid)
             {
@@ -91,13 +114,19 @@ namespace OfficeEscape
             }
 
             if (!run.IsPlaying || !Button(hmd, CommonUsages.isTracked)) return;
-            bool crouch = Button(right, CommonUsages.primaryButton);
             bool watch = Button(left, CommonUsages.primaryButton);
             ApplyStance(crouch, watch);
 
+            var remote = run.printer.remote;
+            Transform aim = rightHand.IsSelecting(remote) ? leftHand.transform : rightHand.transform;
+            if (Physics.Raycast(aim.position, aim.forward, out RaycastHit hit, 1.25f, desktopAimLayers))
+                UpdateInteraction(hit.collider, interactPressed);
+            else
+                UpdateInteraction(null, interactPressed);
+
             if (crouch || watch || leftHand.IsSelecting(run.drawer.handle) || rightHand.IsSelecting(run.drawer.handle)) return;
 
-            var moveDevice = leftHand.IsSelecting(run.drawer.badge) ? right : left;
+            var moveDevice = leftHand.IsSelecting(remote) ? right : left;
             if (!moveDevice.TryGetFeatureValue(CommonUsages.primary2DAxis, out Vector2 stick)) return;
 
             Vector3 forward = Vector3.ProjectOnPlane(view.forward, Vector3.up).normalized;
@@ -113,7 +142,12 @@ namespace OfficeEscape
 
         void UpdateDesktop()
         {
-            var mouse = Mouse.current;
+            if (!rightHand.IsSelecting(run.printer.remote))
+            {
+                remoteGripMouse = null;
+                releaseRemoteRequested = false;
+            }
+            var mouse = remoteGripMouse ?? Mouse.current;
             var keyboard = Keyboard.current;
             if (mouse == null || keyboard == null) return;
             if (mouse.leftButton.wasPressedThisFrame)
@@ -129,6 +163,12 @@ namespace OfficeEscape
                 desktopControlsActive = false;
             }
             retryPressed = keyboard.rKey.wasPressedThisFrame;
+            if (run.IsPlaying && rightHand.IsSelecting(run.printer.remote) && releaseRemoteRequested)
+            {
+                remoteGripMouse = null;
+                releaseRemoteRequested = false;
+                rightHand.EndManualInteraction();
+            }
             if (!run.IsPlaying || !desktopControlsActive) return;
 
             Vector2 look = mouse.delta.ReadValue() * .12f;
@@ -139,7 +179,7 @@ namespace OfficeEscape
             bool crouch = keyboard.cKey.isPressed;
             bool watch = keyboard.tabKey.isPressed;
             ApplyStance(crouch, watch);
-            UpdateDesktopHand(keyboard);
+            UpdateDesktopHand(keyboard, mouse);
             if (crouch || watch || rightHand.IsSelecting(run.drawer.handle)) return;
 
             Vector2 direction = new Vector2((keyboard.dKey.isPressed ? 1 : 0) - (keyboard.aKey.isPressed ? 1 : 0),
@@ -151,10 +191,14 @@ namespace OfficeEscape
 
         void OnApplicationFocus(bool focused)
         {
-            if (!focused) desktopControlsActive = false;
+            if (!focused)
+            {
+                desktopControlsActive = false;
+                releaseRemoteRequested = false;
+            }
         }
 
-        void UpdateDesktopHand(Keyboard keyboard)
+        void UpdateDesktopHand(Keyboard keyboard, Mouse mouse)
         {
             bool hasTarget = Physics.Raycast(view.position, view.forward, out RaycastHit target,
                 2f, desktopAimLayers, QueryTriggerInteraction.Collide);
@@ -163,6 +207,7 @@ namespace OfficeEscape
 
             if (rightHand.IsSelecting(handle))
             {
+                run.SetInteractionHint(null);
                 if (!keyboard.eKey.isPressed)
                 {
                     rightHand.EndManualInteraction();
@@ -175,39 +220,76 @@ namespace OfficeEscape
                 return;
             }
 
-            if (rightHand.IsSelecting(badge) && keyboard.eKey.wasPressedThisFrame)
-            {
-                previewReader = hasTarget ? target.collider.GetComponentInParent<BadgeReader>() : null;
-                if (!previewReader) rightHand.EndManualInteraction();
-            }
-
             Transform hand = rightHand.transform;
-            hand.SetPositionAndRotation(previewReader ? previewReader.socket.attachTransform.position :
-                view.TransformPoint(new Vector3(.23f, -.19f, .43f)), view.rotation);
-            if (rightHand.hasSelection || !keyboard.eKey.wasPressedThisFrame || !hasTarget) return;
+            hand.SetPositionAndRotation(view.TransformPoint(new Vector3(.23f, -.19f, .43f)), view.rotation);
+            var remote = run.printer.remote;
+            bool pressed = keyboard.eKey.wasPressedThisFrame;
+            if (!rightHand.hasSelection && hasTarget)
+            {
+                if (pressed && target.collider.GetComponentInParent<XRSimpleInteractable>() == handle)
+                {
+                    previewDrawerOrigin = target.point;
+                    previewDrawerAxis = run.drawer.transform.parent;
+                    drawerPull = 0;
+                    drawerPullFrame = Time.frameCount;
+                    hand.position = previewDrawerOrigin;
+                    rightHand.StartManualInteraction((IXRSelectInteractable)handle);
+                    return;
+                }
 
-            if (target.collider.GetComponentInParent<XRSimpleInteractable>() == handle)
-            {
-                previewDrawerOrigin = target.point;
-                previewDrawerAxis = run.drawer.transform.parent;
-                drawerPull = 0;
-                drawerPullFrame = Time.frameCount;
-                hand.position = previewDrawerOrigin;
-                rightHand.StartManualInteraction((IXRSelectInteractable)handle);
+                if (pressed && badge.gameObject.activeInHierarchy && target.collider.GetComponentInParent<XRGrabInteractable>() == badge)
+                {
+                    hand.position = badge.transform.position;
+                    rightHand.StartManualInteraction((IXRSelectInteractable)badge);
+                    rightHand.EndManualInteraction();
+                    return;
+                }
+
+                if (!remote.WasDropped && target.collider.GetComponentInParent<OfficePrinterRemote>() == remote)
+                {
+                    if (mouse.rightButton.wasPressedThisFrame)
+                    {
+                        rightHand.StartManualInteraction((IXRSelectInteractable)remote);
+                        if (rightHand.IsSelecting(remote)) remoteGripMouse = mouse;
+                    }
+                    else
+                    {
+                        run.SetInteractionHint("우클릭 유지  리모컨 잡기");
+                        return;
+                    }
+                }
             }
-            else if (badge.gameObject.activeInHierarchy && target.collider.GetComponentInParent<XRGrabInteractable>() == badge)
-            {
-                hand.position = badge.transform.position;
-                rightHand.StartManualInteraction((IXRSelectInteractable)badge);
-            }
+
+            UpdateInteraction(hasTarget && target.distance <= 1.55f ? target.collider : null, pressed);
         }
 
-        public bool ReleaseDesktopBadge(IXRSelectInteractor hand)
+        void UpdateInteraction(Collider target, bool pressed)
         {
-            if (!Desktop || hand != rightHand) return false;
-            rightHand.EndManualInteraction();
-            previewReader = null;
-            return true;
+            string key = Desktop ? "E" : "B";
+            var printer = run.printer;
+            if (target && run.reader.IsTarget(target.transform) && !run.reader.IsAuthorized)
+            {
+                run.SetInteractionHint(key + (run.HasBadge ? "  사원증 찍기" : "  문 확인"));
+                if (pressed) run.reader.Scan();
+                return;
+            }
+
+            if (printer.remote.isSelected && printer.CanSchedule)
+            {
+                run.SetInteractionHint(key + "  예약 출력");
+                if (pressed) printer.Schedule();
+                return;
+            }
+
+            if (target == printer.printButton && printer.CanSchedule)
+            {
+                run.SetInteractionHint(key + "  즉시 출력");
+                if (pressed) printer.PrintImmediately();
+                return;
+            }
+
+            run.SetInteractionHint(!Desktop && target && target.GetComponentInParent<OfficePrinterRemote>() == printer.remote
+                && !printer.remote.isSelected && !printer.remote.WasDropped ? "그립 유지  리모컨 잡기" : null);
         }
 
         void ApplyStance(bool crouch, bool watch)
@@ -221,12 +303,6 @@ namespace OfficeEscape
             body.center = new Vector3(localHead.x, body.height * .5f + .012f, localHead.z);
 
             run.SetWatchVisible(watch);
-            if (watch && !Desktop)
-            {
-                var display = run.watchDisplay.transform;
-                display.position = watchMount.position;
-                display.rotation = Quaternion.LookRotation(display.position - view.position, Vector3.up);
-            }
         }
 
         void Walk(Vector3 direction, float speed, bool loud)
@@ -245,6 +321,8 @@ namespace OfficeEscape
 
         public void StopMovement()
         {
+            remoteGripMouse = null;
+            releaseRemoteRequested = false;
             if (Desktop && rightHand.hasSelection) rightHand.EndManualInteraction();
         }
     }

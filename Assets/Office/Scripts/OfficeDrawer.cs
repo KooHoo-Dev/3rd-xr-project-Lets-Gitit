@@ -22,7 +22,6 @@ namespace OfficeEscape
         float openAtGrab;
         float opening;
         float nextRattle;
-        bool badgeTaken;
 
         void Awake()
         {
@@ -30,12 +29,7 @@ namespace OfficeEscape
             badgeAtRest = badge.transform.position;
             handle.selectEntered.AddListener(GrabHandle);
             handle.selectExited.AddListener(_ => hand = null);
-            badge.selectEntered.AddListener(_ => badgeTaken = true);
-            var badgeBody = badge.GetComponent<Rigidbody>();
-            badge.selectExited.AddListener(_ =>
-            {
-                if (!badge.isSelected && run.IsPlaying) badgeBody.isKinematic = false;
-            });
+            badge.selectEntered.AddListener(_ => run.CollectBadge());
             badge.gameObject.SetActive(false);
         }
 
@@ -53,7 +47,7 @@ namespace OfficeEscape
             opening = Mathf.Clamp(openAtGrab + handAtGrab - HandZ(), 0, travel);
             transform.localPosition = closed + Vector3.back * opening;
 
-            if (!badgeTaken)
+            if (!run.HasBadge)
             {
                 badge.transform.position = badgeAtRest - transform.parent.forward * opening;
                 badge.gameObject.SetActive(opening >= badgeReveal);
@@ -65,6 +59,11 @@ namespace OfficeEscape
                 railAudio.Play();
                 run.ReportNoise(transform.position);
             }
+        }
+
+        void LateUpdate()
+        {
+            if (run.HasBadge && badge.gameObject.activeSelf) badge.gameObject.SetActive(false);
         }
 
         float HandZ() => transform.parent.InverseTransformPoint(hand.GetAttachTransform(handle).position).z;

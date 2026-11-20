@@ -17,7 +17,7 @@ namespace OfficeEscape
         [Min(.1f)] public float warningSeconds = 1.2f;
         [Min(.1f)] public float exposureSeconds = .5f;
 
-        enum Phase { Seated, StandingUp, Searching, SittingDown }
+        enum Phase { Seated, StandingUp, Searching, SittingDown, TurningToPrinter, WatchingPrinter }
 
         Phase phase;
         float phaseAge;
@@ -26,10 +26,19 @@ namespace OfficeEscape
         float lookYaw;
         float soundYaw;
         float searchLength;
+        float standingAmount;
+        float chairAmount;
+        float bodyYaw;
+        float startStandingAmount;
+        float startChairAmount;
+        float printerYaw;
+        float watchEndsAt;
         bool heard;
         Vector3 chairRest;
         Quaternion torsoRest;
         Quaternion armRest;
+
+        public bool IsWatchingPrinter => phase == Phase.WatchingPrinter && Time.time < watchEndsAt;
 
         void Awake()
         {
@@ -43,9 +52,21 @@ namespace OfficeEscape
 
         public void Hear(Vector3 position)
         {
+            if (phase == Phase.TurningToPrinter || phase == Phase.WatchingPrinter) return;
             soundYaw = LocalYaw(position);
             heard = true;
             if (phase == Phase.Seated || phase == Phase.SittingDown) StartStanding();
+        }
+
+        public void InvestigatePrinter(Vector3 position)
+        {
+            printerYaw = LocalYaw(position);
+            startStandingAmount = standingAmount;
+            startChairAmount = chairAmount;
+            exposure = 0;
+            phase = Phase.TurningToPrinter;
+            phaseAge = 0;
+            chairAudio.Play();
         }
 
         void Update()
@@ -78,9 +99,28 @@ namespace OfficeEscape
                     break;
                 case Phase.SittingDown:
                     float sit = 1f - Mathf.Clamp01(phaseAge / .63f);
-                    ApplyPose(sit, sit, 0);
+                    ApplyPose(sit, sit, 0, Mathf.MoveTowardsAngle(bodyYaw, 0, 150f * Time.deltaTime));
                     TurnToward(0);
                     if (sit <= 0) ScheduleStand();
+                    break;
+                case Phase.TurningToPrinter:
+                    float turn = Mathf.SmoothStep(0, 1, Mathf.Clamp01(phaseAge / .55f));
+                    ApplyPose(Mathf.Lerp(startStandingAmount, 1, turn), Mathf.Lerp(startChairAmount, 1, turn), 0,
+                        Mathf.MoveTowardsAngle(bodyYaw, printerYaw, 180f * Time.deltaTime));
+                    TurnToward(printerYaw);
+                    if (turn >= 1 && Mathf.Abs(Mathf.DeltaAngle(lookYaw, printerYaw)) <= 1f)
+                    {
+                        phase = Phase.WatchingPrinter;
+                        watchEndsAt = Time.time + 5f;
+                        run.ShowBossLine("거기 누구 있나?");
+                    }
+                    break;
+                case Phase.WatchingPrinter:
+                    if (Time.time >= watchEndsAt)
+                    {
+                        phase = Phase.SittingDown;
+                        phaseAge = 0;
+                    }
                     break;
             }
         }
@@ -124,10 +164,13 @@ namespace OfficeEscape
             head.localRotation = Quaternion.Euler(0, lookYaw, 0);
         }
 
-        void ApplyPose(float standing, float chairSlide, float brace)
+        void ApplyPose(float standing, float chairSlide, float brace, float yaw = 0)
         {
+            standingAmount = standing;
+            chairAmount = chairSlide;
+            bodyYaw = yaw;
             torso.localPosition = new Vector3(0, Mathf.Lerp(.87f, 1.41f, standing), .1f * brace);
-            torso.localRotation = torsoRest * Quaternion.Euler(22f * brace, 0, 0);
+            torso.localRotation = Quaternion.Euler(0, bodyYaw, 0) * torsoRest * Quaternion.Euler(22f * brace, 0, 0);
             chair.localPosition = chairRest + Vector3.back * (.35f * chairSlide);
             PoseArm(leftArm, -.24f, brace);
             PoseArm(rightArm, .24f, brace);
@@ -162,7 +205,7 @@ namespace OfficeEscape
         void TurnToward(float target)
         {
             lookYaw = Mathf.MoveTowardsAngle(lookYaw, target, 175f * Time.deltaTime);
-            head.localRotation = Quaternion.Euler(0, lookYaw, 0);
+            head.localRotation = Quaternion.Euler(0, lookYaw - bodyYaw, 0);
         }
 
         float LocalYaw(Vector3 position)
