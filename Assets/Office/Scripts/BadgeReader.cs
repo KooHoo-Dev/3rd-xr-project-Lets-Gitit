@@ -10,10 +10,12 @@ namespace OfficeEscape
         public Material authorizedLight;
         public AudioSource beep;
         public Transform threshold;
+        public BoxCollider reminderArea;
 
         Vector3 doorClosed;
         float openProgress;
         float flashUntil;
+        bool badgeReminderShown;
 
         public bool IsAuthorized { get; private set; }
 
@@ -41,6 +43,11 @@ namespace OfficeEscape
         void Update()
         {
             if (!run.IsPlaying) return;
+            if (!run.HasBadge && !badgeReminderShown && reminderArea && reminderArea.bounds.Contains(run.player.View.position))
+            {
+                badgeReminderShown = true;
+                run.ShowThought("이런, 문을 열려면 사원증이 필요해. 서랍에 넣어뒀는데!");
+            }
             if (!IsAuthorized)
             {
                 statusLight.enabled = flashUntil - Time.time <= .26f;
