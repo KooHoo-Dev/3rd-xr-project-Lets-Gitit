@@ -310,7 +310,7 @@ namespace OfficeEscape
 
             if (target == printer.printButton && printer.CanSchedule)
             {
-                run.SetInteractionHint(key + "  즉시 출력");
+                run.SetInteractionHint(key + "  출력");
                 if (pressed) printer.PrintImmediately();
                 return;
             }

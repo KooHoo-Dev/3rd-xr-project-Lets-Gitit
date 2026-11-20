@@ -8,6 +8,8 @@ namespace OfficeEscape
     {
         public const float Duration = 60f;
         const float SecondsPerClockSecond = 1.5f;
+        const float FailureFollowUpDelay = 3f;
+        const float FailureFollowUpDuration = 2.25f;
         const string CaughtLine = "자네! 거기 있었구만! 이리 좀 와봐!";
         const string LateLine = "어? 퇴근 목록에 한 사람이 없네?";
         const string ExposureLine = "부장님 시선을 먼저 돌려야 해! 프린터기를 작동시키면 되지 않을까?";
@@ -39,6 +41,7 @@ namespace OfficeEscape
         float dialogueUntil;
         bool started;
         bool hasFailureThought;
+        string failureFollowUp;
 
         public bool IsPlaying => started && outcome == Outcome.Playing;
         public float SecondsLeft => started ? Mathf.Max(0, Duration - (Time.time - startedAt) / SecondsPerClockSecond) : Duration;
@@ -81,13 +84,22 @@ namespace OfficeEscape
             }
 
             float sinceEnd = Time.time - finishedAt;
+            bool hasFollowUp = !string.IsNullOrEmpty(failureFollowUp);
+            float followUpEnd = FailureFollowUpDelay + FailureFollowUpDuration;
+            if (hasFollowUp && sinceEnd < followUpEnd)
+            {
+                if (sinceEnd >= FailureFollowUpDelay) thought.text = failureFollowUp;
+                dialogue.enabled = false;
+                return;
+            }
+
             bool escaped = outcome == Outcome.Escaped;
-            float fadeStart = escaped ? 0f : outcome == Outcome.Late ? 2.75f : hasFailureThought ? 1.85f : 1.05f;
+            float fadeStart = hasFollowUp ? followUpEnd : escaped ? 0f : outcome == Outcome.Late ? 2.75f : hasFailureThought ? 1.85f : 1.05f;
             float fade = Mathf.SmoothStep(0, 1, Mathf.Clamp01((sinceEnd - fadeStart) / .65f));
             blackout.color = new Color(0, 0, 0, fade);
             dialogue.text = escaped ? string.Empty : outcome == Outcome.Late && sinceEnd < 1.45f
                 ? LateLine : CaughtLine;
-            dialogue.enabled = !escaped && fade < .96f && (!hasFailureThought || sinceEnd >= 1.05f);
+            dialogue.enabled = !escaped && !hasFollowUp && fade < .96f && (!hasFailureThought || sinceEnd >= 1.05f);
             if (sinceEnd >= 1.4f) thought.text = string.Empty;
             result.enabled = fade > .9f;
             retryHint.enabled = result.enabled;
@@ -142,12 +154,12 @@ namespace OfficeEscape
 
         public void SetInteractionHint(string line) => interactionHint.text = line ?? string.Empty;
 
-        public void Caught(string playerThought = null)
+        public void Caught(string playerThought = null, string followUpThought = null)
         {
-            if (IsPlaying && SecondsLeft > 0f) Finish(Outcome.Caught, playerThought);
+            if (IsPlaying && SecondsLeft > 0f) Finish(Outcome.Caught, playerThought, followUpThought);
         }
 
-        void Finish(Outcome next, string playerThought = null)
+        void Finish(Outcome next, string playerThought = null, string followUpThought = null)
         {
             outcome = next;
             finishedAt = Time.time;
@@ -155,6 +167,7 @@ namespace OfficeEscape
             questHint.enabled = false;
             watchDisplay.SetActive(false);
             hasFailureThought = !string.IsNullOrEmpty(playerThought);
+            failureFollowUp = followUpThought;
             thought.text = playerThought ?? string.Empty;
             SetInteractionHint(null);
             printerCountdown.text = string.Empty;

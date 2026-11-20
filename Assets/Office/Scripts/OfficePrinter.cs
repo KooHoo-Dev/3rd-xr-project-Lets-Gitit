@@ -37,7 +37,7 @@ namespace OfficeEscape
         {
             if (!run.IsPlaying || !CanSchedule) return;
             StartPrinting();
-            run.Caught("버튼을 누르자마자 부장님이 이쪽을 봤어!");
+            run.Caught("버튼을 누르자마자 부장님이 이쪽을 봤어!", "프린터는 리모콘으로 몰래 작동시켜야 해!");
         }
 
         void Update()
