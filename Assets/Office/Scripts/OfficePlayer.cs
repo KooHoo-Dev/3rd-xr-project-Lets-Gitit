@@ -12,6 +12,8 @@ namespace OfficeEscape
 {
     public sealed class OfficePlayer : MonoBehaviour
     {
+        const float EyeHeight = 1.63f;
+
         public OfficeRun run;
         public CharacterController body;
         public Transform trackingSpace;
@@ -25,12 +27,12 @@ namespace OfficeEscape
         public GameObject desktopReticle;
         public GameObject desktopStart;
         public AudioSource stepAudio;
+        [Min(0f)] public float turnSpeed = 60f;
 
         readonly List<XRInputSubsystem> inputSubsystems = new();
         readonly Dictionary<Mouse, bool> rightButtonStates = new();
         readonly Queue<(Mouse mouse, bool pressed)> remoteButtonChanges = new();
         bool ready;
-        bool floorTracking;
         bool retryPressed;
         bool retryHeld;
         bool interactHeld;
@@ -63,15 +65,20 @@ namespace OfficeEscape
             leftTracking.enabled = false;
             rightTracking.enabled = false;
             leftHand.gameObject.SetActive(false);
-            view.localPosition = new Vector3(0, 1.63f, 0);
+            view.localPosition = new Vector3(0, EyeHeight, 0);
             yaw = transform.eulerAngles.y;
         }
 
-        void OnEnable() => InputSystem.onEvent += ReadDesktopRightButton;
+        void OnEnable()
+        {
+            InputSystem.onEvent += ReadDesktopRightButton;
+            Application.onBeforeRender += UpdateHeadsetHeight;
+        }
 
         void OnDisable()
         {
             InputSystem.onEvent -= ReadDesktopRightButton;
+            Application.onBeforeRender -= UpdateHeadsetHeight;
             remoteGripMouse = null;
             remoteButtonChanges.Clear();
             rightButtonStates.Clear();
@@ -117,13 +124,15 @@ namespace OfficeEscape
                 foreach (var subsystem in inputSubsystems)
                 {
                     if (subsystem.running)
-                        floorTracking = subsystem.TrySetTrackingOriginMode(TrackingOriginModeFlags.Floor);
+                        subsystem.TrySetTrackingOriginMode(TrackingOriginModeFlags.Floor);
                 }
                 ready = true;
             }
 
             if (!run.IsPlaying || !Button(hmd, CommonUsages.isTracked)) return;
             bool watch = Button(left, CommonUsages.primaryButton);
+            if (right.TryGetFeatureValue(CommonUsages.primary2DAxis, out Vector2 turnStick))
+                TurnHeadset(turnStick);
             ApplyStance(crouch, watch);
 
             var remote = run.printer.remote;
@@ -135,8 +144,7 @@ namespace OfficeEscape
 
             if (crouch || watch || leftHand.IsSelecting(run.drawer.handle) || rightHand.IsSelecting(run.drawer.handle)) return;
 
-            var moveDevice = leftHand.IsSelecting(remote) ? right : left;
-            if (!moveDevice.TryGetFeatureValue(CommonUsages.primary2DAxis, out Vector2 stick)) return;
+            if (!left.TryGetFeatureValue(CommonUsages.primary2DAxis, out Vector2 stick)) return;
 
             Vector3 forward = Vector3.ProjectOnPlane(view.forward, Vector3.up).normalized;
             if (forward.sqrMagnitude < .01f) forward = transform.forward;
@@ -148,6 +156,13 @@ namespace OfficeEscape
 
         static bool Button(UnityEngine.XR.InputDevice device, InputFeatureUsage<bool> usage) =>
             device.TryGetFeatureValue(usage, out bool value) && value;
+
+        void TurnHeadset(Vector2 stick)
+        {
+            float amount = Mathf.InverseLerp(.17f, .96f, Mathf.Abs(stick.x)) * Mathf.Sign(stick.x);
+            if (amount == 0f) return;
+            transform.RotateAround(view.position, Vector3.up, amount * turnSpeed * Time.deltaTime);
+        }
 
         void UpdateDesktop()
         {
@@ -321,15 +336,25 @@ namespace OfficeEscape
 
         void ApplyStance(bool crouch, bool watch)
         {
-            float trackingHeight = Desktop || floorTracking ? 0f : 1.6f;
-            float amount = Mathf.Clamp(view.localPosition.y + trackingHeight - .78f, 0, .74f);
+            float amount = Mathf.Clamp(EyeHeight - .78f, 0, .74f);
             crouchOffset = Mathf.MoveTowards(crouchOffset, crouch ? amount : 0, 4f * Time.deltaTime);
-            trackingSpace.localPosition = Vector3.up * (trackingHeight - crouchOffset);
+            if (Desktop) trackingSpace.localPosition = Vector3.down * crouchOffset;
+            else UpdateHeadsetHeight();
             Vector3 localHead = transform.InverseTransformPoint(view.position);
             body.height = Mathf.Max(.55f, localHead.y + .08f);
             body.center = new Vector3(localHead.x, body.height * .5f + .012f, localHead.z);
 
             run.SetWatchVisible(watch);
+        }
+
+        void LateUpdate() => UpdateHeadsetHeight();
+
+        [BeforeRenderOrder(50)]
+        void UpdateHeadsetHeight()
+        {
+            if (Desktop) return;
+            // Offset the whole tracking space so head rotation and hand positions stay relative to the headset.
+            trackingSpace.localPosition = Vector3.up * (EyeHeight - view.localPosition.y - crouchOffset);
         }
 
         void Walk(Vector3 direction, float speed, bool loud)

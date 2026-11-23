@@ -47,6 +47,9 @@ namespace OfficeEscape
 
         internal void Configure(bool desktop)
         {
+            timer.anchorMin = timer.anchorMax = timer.pivot = new Vector2(.5f, .5f);
+            timer.anchoredPosition = new Vector2(-175f, -55f);
+
             if (desktop)
             {
                 var canvas = GetComponent<Canvas>();
@@ -54,13 +57,9 @@ namespace OfficeEscape
                 transform.localScale = Vector3.one;
                 canvas.renderMode = RenderMode.ScreenSpaceOverlay;
 
-                timer.anchorMin = timer.anchorMax = timer.pivot = Vector2.zero;
-                timer.anchoredPosition = new Vector2(24f, 22f);
                 return;
             }
 
-            timer.anchorMin = timer.anchorMax = timer.pivot = new Vector2(.5f, .5f);
-            timer.anchoredPosition = new Vector2(-245f, -215f);
             if (!headsetOverlay) headsetOverlay = Resources.Load<Material>("Headset HUD");
             foreach (var graphic in GetComponentsInChildren<Graphic>(true))
                 graphic.material = headsetOverlay;
