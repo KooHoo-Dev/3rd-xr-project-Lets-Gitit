@@ -13,6 +13,7 @@ namespace OfficeEscape
     public sealed class OfficePlayer : MonoBehaviour
     {
         const float EyeHeight = 1.63f;
+        const float SlowMoveSpeed = .6f;
 
         public OfficeRun run;
         public CharacterController body;
@@ -142,7 +143,7 @@ namespace OfficeEscape
             else
                 UpdateInteraction(null, interactPressed);
 
-            if (crouch || watch || leftHand.IsSelecting(run.drawer.handle) || rightHand.IsSelecting(run.drawer.handle)) return;
+            if (leftHand.IsSelecting(run.drawer.handle) || rightHand.IsSelecting(run.drawer.handle)) return;
 
             if (!left.TryGetFeatureValue(CommonUsages.primary2DAxis, out Vector2 stick)) return;
 
@@ -151,7 +152,8 @@ namespace OfficeEscape
             Vector3 side = Vector3.Cross(Vector3.up, forward);
             Vector3 movement = (side * stick.x + forward * stick.y).normalized;
             float amount = Mathf.InverseLerp(.17f, .96f, stick.magnitude);
-            Walk(movement, amount * 1.9f, stick.magnitude >= .68f);
+            bool slow = crouch || watch;
+            Walk(movement, amount * (slow ? SlowMoveSpeed : 1.9f), !slow && stick.magnitude >= .68f);
         }
 
         static bool Button(UnityEngine.XR.InputDevice device, InputFeatureUsage<bool> usage) =>
@@ -204,13 +206,14 @@ namespace OfficeEscape
             ApplyStance(crouch, watch);
             UpdateDesktopHand(keyboard);
             remoteButtonChanges.Clear();
-            if (crouch || watch || rightHand.IsSelecting(run.drawer.handle)) return;
+            if (rightHand.IsSelecting(run.drawer.handle)) return;
 
             Vector2 direction = new Vector2((keyboard.dKey.isPressed ? 1 : 0) - (keyboard.aKey.isPressed ? 1 : 0),
                 (keyboard.wKey.isPressed ? 1 : 0) - (keyboard.sKey.isPressed ? 1 : 0));
-            bool loud = keyboard.shiftKey.isPressed;
+            bool slow = crouch || watch;
+            bool loud = !slow && keyboard.shiftKey.isPressed;
             Vector3 worldDirection = transform.TransformDirection(new Vector3(direction.x, 0, direction.y).normalized);
-            Walk(worldDirection, loud ? 1.9f : .98f, loud);
+            Walk(worldDirection, slow ? SlowMoveSpeed : loud ? 1.9f : .98f, loud);
         }
 
         void OnApplicationFocus(bool focused)
