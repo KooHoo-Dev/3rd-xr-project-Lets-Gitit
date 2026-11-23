@@ -118,7 +118,7 @@ namespace OfficeEscape
                     if (turn >= 1 && Mathf.Abs(Mathf.DeltaAngle(lookYaw, printerYaw)) <= 1f)
                     {
                         phase = Phase.WatchingPrinter;
-                        watchEndsAt = Time.time + 5f;
+                        watchEndsAt = Time.time + 7f;
                         run.ShowBossLine("거기 누구 있나?");
                     }
                     break;

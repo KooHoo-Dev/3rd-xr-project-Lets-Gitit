@@ -123,9 +123,9 @@ namespace OfficeEscape
 
         public void ReportNoise(Vector3 position, bool isFootstep = false)
         {
-            if (!IsPlaying) return;
+            if (!IsPlaying || boss.IsWatchingPrinter) return;
             if (InExposedApproach)
-                Caught(boss.IsWatchingPrinter ? "발소리가 너무 컸어!" : ExposureLine);
+                Caught(ExposureLine);
             else
                 boss.Hear(position, isFootstep);
         }
@@ -156,7 +156,7 @@ namespace OfficeEscape
 
         public void Caught(string playerThought = null, string followUpThought = null)
         {
-            if (IsPlaying && SecondsLeft > 0f) Finish(Outcome.Caught, playerThought, followUpThought);
+            if (IsPlaying && SecondsLeft > 0f && !boss.IsWatchingPrinter) Finish(Outcome.Caught, playerThought, followUpThought);
         }
 
         void Finish(Outcome next, string playerThought = null, string followUpThought = null)
