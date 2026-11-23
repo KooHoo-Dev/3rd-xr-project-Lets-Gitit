@@ -153,7 +153,7 @@ namespace OfficeEscape
             Vector3 movement = (side * stick.x + forward * stick.y).normalized;
             float amount = Mathf.InverseLerp(.17f, .96f, stick.magnitude);
             bool slow = crouch || watch;
-            Walk(movement, amount * (slow ? SlowMoveSpeed : 1.9f), !slow && stick.magnitude >= .68f);
+            Walk(movement, amount * (slow ? SlowMoveSpeed : 1.9f), !slow && stick.magnitude >= .72f);
         }
 
         static bool Button(UnityEngine.XR.InputDevice device, InputFeatureUsage<bool> usage) =>
@@ -371,7 +371,7 @@ namespace OfficeEscape
             stepAudio.volume = loud ? .76f : .18f;
             stepAudio.pitch = Random.Range(.93f, 1.08f);
             stepAudio.Play();
-            if (loud) run.ReportNoise(transform.position);
+            if (loud) run.ReportNoise(transform.position, isFootstep: true);
         }
 
         public void StopMovement()

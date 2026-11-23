@@ -121,13 +121,13 @@ namespace OfficeEscape
 
         public void SetWatchVisible(bool visible) => watchDisplay.SetActive(visible && IsPlaying);
 
-        public void ReportNoise(Vector3 position)
+        public void ReportNoise(Vector3 position, bool isFootstep = false)
         {
             if (!IsPlaying) return;
             if (InExposedApproach)
                 Caught(boss.IsWatchingPrinter ? "발소리가 너무 컸어!" : ExposureLine);
             else
-                boss.Hear(position);
+                boss.Hear(position, isFootstep);
         }
 
         public void CollectBadge()

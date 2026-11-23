@@ -23,6 +23,7 @@ namespace OfficeEscape
         float phaseAge;
         float nextStand;
         float exposure;
+        int loudFootsteps;
         float lookYaw;
         float soundYaw;
         float searchLength;
@@ -50,9 +51,14 @@ namespace OfficeEscape
 
         public void Begin() => ScheduleStand();
 
-        public void Hear(Vector3 position)
+        public void Hear(Vector3 position, bool isFootstep = false)
         {
             if (phase == Phase.TurningToPrinter || phase == Phase.WatchingPrinter) return;
+            if (isFootstep && (phase == Phase.Seated || phase == Phase.SittingDown))
+            {
+                loudFootsteps++;
+                if (loudFootsteps < 2) return;
+            }
             soundYaw = LocalYaw(position);
             heard = true;
             if (phase == Phase.Seated || phase == Phase.SittingDown) StartStanding();
@@ -60,6 +66,7 @@ namespace OfficeEscape
 
         public void InvestigatePrinter(Vector3 position)
         {
+            loudFootsteps = 0;
             printerYaw = LocalYaw(position);
             startStandingAmount = standingAmount;
             startChairAmount = chairAmount;
@@ -143,6 +150,7 @@ namespace OfficeEscape
 
         void StartStanding()
         {
+            loudFootsteps = 0;
             phase = Phase.StandingUp;
             phaseAge = 0;
             chairAudio.Play();
@@ -154,6 +162,7 @@ namespace OfficeEscape
             phaseAge = 0;
             exposure = 0;
             heard = false;
+            loudFootsteps = 0;
             nextStand = Random.Range(3.9f, 7.3f);
         }
 
